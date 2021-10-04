@@ -1,0 +1,1087 @@
+---
+title: "Machine Learning project"
+author: "Edoardo Berti , Ruben Martinez Cuella, Giacomo Gattorno, Pamela Scaltrito"
+date: "12/18/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Predicting Spotify data
+
+#### Motivation
+This project presents a wide variety of Machine Learning (ML) techniques to predict two outcome variables: the popularity of a song and its genre. Besides, we attempt to compare the performance of the models by using the appropriate measures. The motivation behind this analysis is two-fold: on the one hand pedagogical, in order to be able to use both regression and classification algorithms; on the other hand pragmatic, given that similar analysis can be used in real-life applications, as we will discuss in a moment. 
+
+#### Database
+The database has been retrieved manually through the Spotify API, for which we have obtained 7,453 observations with 13 audio features for each song. Next, we have downloaded the lyrics for those observations using the Genius API, obtaining an additional variable containing the lyrics for each song. We then performed a basic sentiment analysis using the **syuzhet** package. It is based on a dictionary of English words and their associations with eight basic emotions and two sentiments (negative and positive). Thus, we could add 10 additional variables for each song based on this simple sentiment analysis. This brings in an interesting question that is answered through the report: can performing a basic sentiment analysis improve the predictive power of the models substantially? It could potentially boost predictive power with low effort. The variables are the following:
+
+* `genre`: genre of the song. Factor with 7 levels: rock, pop, rap, EDM, Jazz, songwritter and metal
+* `popularity`: value between 0-100. It is based, in the most part, on the total number of plays the track has had and how recent those plays are.
+* `danceability`: continous variable between 0-1. How suitable it is for dancing.
+* `energy`: continous measure from 0-1. It represents a perceptual measure of intensity and activity.
+* `acousticness`: variable between 0-1.Determines whether the track is acoustic.
+* `instrumentalness`: variable between 0-1, depending how many vocal sounds it has.
+* `liveness`: variable between 0-1. It represents the likelihood of being a live performance.
+* `loudness`: countinous variable indicating debibels (dB). Typical range is -60 to 0.
+* `speechiness`: variable from 0-1 indicating the presence of spoken words in the track.
+* `valence`: measure from 0-1 describing musical positiveness.
+* `tempo`: overall estimated tempo of a track in beats per minute (BPM).
+* `duration_ms`: duration of the track in milisecons (ms).
+* `key`: the overall key of the track. Range from 0 to 11.
+* `mode`: variable that indicates the modality of the track.
+* `time_signature`: measures how many beats there are in every bar.
+* `anger`: percentage of words in lyrics that trigger the emotion anger.
+* `anticipation`: percentage of words in lyrics that trigger the emotion anticipation.
+* `disgust`: percentage of words in lyrics that trigger the emotion disgust.
+* `fear`: percentage of words in lyrics that trigger the emotion fear.
+* `joy`: percentage of words in lyrics that trigger the emotion joy.
+* `sadness`: percentage of words in lyrics that trigger the emotion sadness.
+* `surprise`: percentage of words in lyrics that trigger the emotion surprise.
+* `trust`: percentage of words in lyrics that trigger the emotion trust.
+* `negative`: percentage of words in lyrics that trigger negative sentiment.
+* `positive`: percentage of words in lyrics that trigger positive sentiment.
+
+#### Install required packages
+```{r, echo=FALSE}
+packages <- c("rmarkdown","leaps","ISLR","boot","MASS","tidyverse","caret","fastDummies","glmnet","tree","randomForest","caTools","e1071","ggthemes","ggplot2","klaR","mltest","xgboost","ggrepel")
+#Uncomment below if you need to install those packages
+#install.packages(packages, repos = "https://cran.rstudio.com")
+lapply(packages, library, character.only = TRUE)
+```
+#### Load dataset
+```{r}
+spotify_right_lyrics_popularity <- read_csv("https://raw.githubusercontent.com/rubenmartinez9/Spotify-ML-project/main/spotify_right_lyrics_popularity%20(1).csv")
+#Genre as factor
+spotify_right_lyrics_popularity <-spotify_right_lyrics_popularity %>% mutate( 
+                               genre=genre %>% as.factor())
+#Data_final is a dataset with genre coded with dummy variables
+data_final <- dummy_cols(spotify_right_lyrics_popularity, remove_first_dummy = TRUE) %>% mutate(genre=NULL)
+
+#Spotify is dataset in which genre is a factor
+Spotify <- spotify_right_lyrics_popularity
+```
+
+## 1. Predicting _popularity_
+
+In this section, we compare the predicting ability in terms of MSE of the popularity variable. Predicting popularity can be interesting for a few reasons. on the one hand, knowing which songs will become the most popular can be very interesting for many stakeholders, such as radio stations, advertising companies, etc. On the other hand, identifying what variables are most helpful to predict popularity can provide some insights to artists trying to infer better song-making processes.
+
+We are using different regression models that allow us to compute predictions for the test set and compare it to the real outcome. As predictors, we are considering all audio features, all sentiment variables and the variable genre. This factor variable has to be encoded in some of the models.
+
+```{r}
+#Here we perform the train/test split we will use in predicting popularity
+# Training and Test Set 
+n = dim(spotify_right_lyrics_popularity)[1]
+set.seed(1)
+train.index = sample(n, round(n/2), replace = FALSE)
+```
+
+### 1.1 Variables Selection
+
+Considering that we have a quite high number of variables it makes sense to employ some selection variables techniques for our analysis. The latter enable us to exclude the variables that are not strictly necessary for the predictive performance of our model, focusing only on the choice of the best ones. 
+
+#### 1.1.1 Best Subset Selection
+Best Subset Selection is a technique that enable us to reduce the number of variables involved in our regression task by combining all the possible models that can be computed throughout our predictive variables.
+
+First of all we will need to define the number of predictors and the number of observation in our database.  
+```{r}
+dimension = dim(data_final)[1]
+predictors= dim(data_final)[2]-1
+```
+Now with the command regsubset implemented in the leaps package we will obtain the results from the Best selection model
+```{r, message=F, warning=F, results="hide"}
+regfit.off = regsubsets (popularity ~ ., 
+                         data =data_final, nvmax=predictors, method="exhaustive")
+summary(regfit.off)
+reg.summary = summary(regfit.off)
+```
+```{r}
+par(mfrow = c(1, 3))
+plot1<-plot(reg.summary$cp, xlab = "Number of Variables", ylab = "Cp")
+plot1<-plot(reg.summary$adjr2, xlab = "Number of Variables", ylab = "AjustedR-sq")
+plot2<-plot(reg.summary$bic, xlab = "Number of Variables", ylab = "BIC")
+par(mfrow = c(1, 1))
+imin = which.min(reg.summary$cp)
+imin#Number of variables for minimum Cp
+min1=min(reg.summary$cp)
+min1#minimum Cp
+imin1=which.min(reg.summary$bic)
+imin1#Number of variables for minimum BIC
+min2=min(reg.summary$bic)
+min2#minimum BIC
+imax=which.max(reg.summary$adjr2)
+imax#Number of variables for maximum R-squared
+max1=max(reg.summary$adjr2)
+max1#maximum R-squared
+```
+ 
+
+The variables selection models works through the application of a correction term to the training test error to transform it into a reliable measure of the test error. These measures are Mallow's CP, the BIC, and the Adjusted-R squared. While analysing the Mallow's CP and the adjusted-R squared, our model reached respectively a minimum and a maximum with 18 variables. By contrast, in the adoption of the  BIC criterion, the minimum was reached in the model including 10 variables.
+```{r, echo=F}
+plot(regfit.off, scale = "Cp")
+```
+
+This graph shows us the variables selected by BSS and gives us an insightful understanding of the role that they play. As we were expecting, some of the genre dummies (in particular Pop, Rap and Songwriter) seem to be very important in the prediction of the popularity of a song. At the same time, we can notice that some technical features of the music like "key", "duration" and "mode" seem not to be very useful for our predictions. Furthermore, the variables that derive from sentiment analysis seem to play a minor role except "trust" and "fear" that are included in the last model with 18 variables
+
+#### 1.1.2 Forward Stepwise Selection
+We will now run Forward Stepwise selection. This model exploits the same rationale of the BSS, but it is defined as a "greedy" algorithm. It selects, indeed, only nested models starting from the "null model" (in the FSS) to then gradually increase the number of variables included avoiding in this way the computational burden associated with BSS. If this reduces the accuracy of our predictions, it also enables us to prevent possible problems of overfitting. We will avoid showing the result of the Backward Stepwise Selection, considering that it delivers results very similar to FSS. 
+```{r, message=F, warning=F, results="hide"}
+regfit.forward = regsubsets(popularity ~ ., 
+                            data = data_final, nvmax=predictors, method = "forward")
+summary(regfit.forward)
+reg.summary2 = summary(regfit.forward)
+```
+
+```{r}
+par(mfrow = c(1, 3))
+plot(reg.summary2$cp, xlab = "Number of Variables", ylab = "Cp")
+plot(reg.summary2$adjr2, xlab = "Number of Variables", ylab = "Adjusted_Rsq")
+plot(reg.summary2$bic, xlab = "Number of Variables", ylab = "BIC")
+par(mfrow = c(1, 1))
+# find the index corresponding to the minimum Mallow's Cp and BIC and to the max. R-squared
+iminf = which.min(reg.summary2$cp)
+iminf#Number of variables for minimum Cp
+minf2=min(reg.summary2$cp)
+minf2#minimum Cp
+iminf1=which.min(reg.summary2$bic)
+iminf1#Number of variables for minimum BIC
+minf3=min(reg.summary2$bic)
+minf3#minimum BIC
+imaxf=which.max(reg.summary2$adjr2)
+imaxf#Number of variables for maximum R-squared
+maxf1=max(reg.summary2$adjr2)
+maxf1 #maximum R-squared
+plot(regfit.forward, scale = "Cp")
+```
+When comparing the previous Best Selection Model and the Forward Stepwise selection, we can see that the number of variables picked by the two models changes considerably. For what concerns the analysis of the main variables employed by the model, the interpretation remains similar.
+
+Error Measure | #of Variables BSS    |  #of Variables FSS       |
+------------- |----------------------|--------------------------|
+CP            |      18              |        20                |
+Adj. R-squared|      18              |        20                |
+BIC           |      10              |        12                |. 
+
+#### 1.1.3 Choice of the model
+Based on the measures that we have calculated we will now choose the best model for our predictive analysis. In particular we will consider the model that delivers the lower Mallow's Cp and BIC while the higher adjusted Rsquared. 
+```{r}
+model_choose1<-c(min1,minf2 )#CP: min1=BSS, minf2=FSS
+model_choose2<-c(min2,minf3)#BIC
+model_choose3 <-c( max1,maxf1)#Adjusted-Rsquared
+#min(model_choose1)
+#min(model_choose2)
+#max(model_choose3)
+which.min(model_choose1)
+which.min(model_choose2)
+which.max(model_choose3)
+```
+Error Measure | Best Subset Selection|Forward Stepwise Selection|
+------------- |----------------------|--------------------------|
+CP            |      11.09           |    14.56                 |
+Adj. R-squared|      0.3181          |   0.3180                 |
+BIC           |     -2730.38         |  -2712.851               |
+
+We can notice how the Best Subset Selection works better when we consider all the three measures that we are taking into account. The latter delivers the lowest value for Mallow's Cp and BIC while the highest value for the adjusted R-squared. However, we have to be cautious when we decide to adopt the Best Selection Model, given that BSS tends to overfit also when we are employing the test set errors. For this reason, we would probably prefer to adopt FSS that despite giving us less accurate results, it will avoid potential overfitting problems. 
+
+####1.1.4 Resampling methods
+In the previous section, we have adopted some analytical correction to obtain a reliable (and faster) measure of the test set error. We will now instead turn to the estimation of the test set error by employing cross-validation on the best model that we have retained from the previous analysis (Forward Stepwise Selection).  The main goal of this subsection is two-folded. From one side, we want to understand whether the two measures of the test set error are similar. On the other side, we want to gain some reliable estimation of the Rooted Means squared error (RMSE) to make the models that we will use comparable. To use this procedure, we would need to download the 'caret' package that will enable us to divide our sample between training and test set.
+
+
+
+```{r, message=F, warning=F, results="hide"}
+#FSS
+pGrid=expand.grid(nvmax=seq(from=1, to=predictors, by=1))
+set.seed(5)
+fitbd <- trainControl(method = "repeatedcv")
+set.seed(5)
+reg.fitfwd1 <- train(popularity ~ ., data =data_final, 
+                 method = "leapForward", trControl = fitbd, tuneGrid = pGrid)
+reg.fitfwd1
+names(reg.fitfwd1)
+```
+```{r}
+#head(reg.fitfwd1$results)
+mincv1=which.max(reg.fitfwd1$results$Rsquared)
+mincv1 #number of variables associated to highest R-squared
+mincv2=max(reg.fitfwd1$results$Rsquared)
+mincv2 #highest R-squared for Cross Validation
+imaxf #number of variables associated to highest R-sq in previous exercise 
+maxf1 #highest R-squared from the previous exercise
+mincv3=which.min(reg.fitfwd1$results$RMSE)
+mincv3#Number associated to a Lower RMSE
+mincv4=min(reg.fitfwd1$results$RMSE)
+mincv4#Lower RMSE
+mse.fss = mincv4^2
+```
+When we examine the results of the Cross-Validation with Forward Stepwise Selection we can notice that the model suggest considering 20 variables that correspond to an adjusted R-squared equal to 0.3162. If we compare these results with what we have obtained by employing the "adjusted" test error, we can notice that the latter suggested us the same number of variables and delivered a higher level of adjusted R-squared (0.3180). The two techniques for taking into account test error are thus not significantly different. Finally, if we consider the model with the lowest RMSE, the model with 20 variables provides the lowest value of this error measure (=16.98).
+
+### 1.2. Shrinkage methods
+We present some results based on ridge regression and the lasso in order to predict **Popularity** on the *Spotify* dataset using the `glmnet` package.
+
+#### 1.2.1. Ridge Regression
+Given the nature of the `glmnet` package, in order to let it work properly, we need to supply a matrix of predictors, `x`, and a vector of outcomes `y`, as follows [^1]
+
+[^1]: We dropped the constant from `x`.
+
+```{r, results='hide'}
+x = model.matrix(popularity ~ . -1, data = data_final) 
+y = data_final$popularity
+```
+
+```{r, results='hide'} 
+# Training and Test Set 
+set.seed(1)
+train.index = sample(n, round(n/2), replace = FALSE)
+x.train = x[train.index, ]
+y.train = y[train.index]
+x.test = x[-train.index, ]
+y.test = y[-train.index]
+data_final.train = data_final[train.index, ]
+data_final.test = data_final[-train.index, ]
+```
+
+
+```{r}
+# Ridge Regression Model
+fit.ridge = glmnet(x.train, y.train, alpha = 0)
+plot(fit.ridge, xvar = "lambda", label = TRUE)
+```
+
+The plot above shows how the parameters estimates evolve as a function of (log)$\lambda$. Unfortunately it shows only the index of the variables, not the name. The degrees of freedom are always equal to 29 because the models are *dense*. We can identify the optimal $\lambda$ and the subsequent coefficients using Cross-Validation.  
+```{r} 
+# 10-fold CV on Lambda
+cv.ridge = cv.glmnet(x.train, y.train, alpha = 0)
+plot(cv.ridge)
+#coef(cv.ridge)
+```
+No parameter is equal to zero showing once again the *density* of the model. The (log)$\lambda$ associated to the lowest value of the MSE has a value near to zero, corresponding to the more constrained model, therefore shrinking the estimated coefficients effectively reduces the variance at the cost of a negligible increase in bias. This can lead to substantial improvements in the accuracy with which we can predict the response for observations not used in model training, making the Ridge Regression preferred also to the Least Squares. 
+
+Given that the optimal $\lambda$ tends to overfit a bit, we can use the best model according to the _one-S.E._ rule to predict on the test set and compute the MSE.
+```{r}
+pred.ridge = predict(cv.ridge, x.test, s = cv.ridge$lambda.1se)
+mse.rr = mean((pred.ridge-y.test)^2)
+mse.rr
+```
+
+#### 1.2.2. LASSO 
+We now turn our interest in applying the LASSO regression method to our data. 
+```{r, results='hide'}
+# LASSO 
+fit.lasso = glmnet(x.train, y.train)
+plot(fit.lasso, xvar = "lambda", label = TRUE)
+fit.lasso
+```
+The plot easily shows how the parameters start getting away from zero one at a time as $\lambda$ decreases. 
+Again we apply Cross Validation to estimate the optimal $\lambda$.
+```{r}
+#Cross-Validation
+set.seed(1)
+cv.lasso = cv.glmnet(x.train, y.train)
+plot(cv.lasso)
+#coef(cv.lasso)
+
+# Choice of the best model
+i.best = which(fit.lasso$lambda == cv.lasso$lambda.1se)
+i.best
+
+# Nonzero parameters
+fit.lasso$df[i.best]
+```
+The advantage of the LASSO with respect to Ridge Regression is that it offers insights also on *variable selection*. This can be seen also on the plot where the second dotted vertical line shows that from the initial 29 coefficients only 11 remains relevant. 
+
+Ultimately the test MSE can be predicted
+
+```{r}
+# Prediction (test MSE)
+pred.lasso = predict(fit.lasso, x.test, s = cv.lasso$lambda.1se)
+mse.lasso = mean((pred.lasso-y.test)^2)
+mse.lasso
+```
+
+The result is slightly above the one obtained with Ridge Regression underlining that the latter performs slightly better than LASSO. This is probably due to the fact that we are in a *dense* dataset rather than a *sparse* one otherwise the more remarkable performances of the LASSO would have emerged.
+
+### 1.3. Tree-based methods
+In this section, we are going to apply **tree-based methods** in a regression model, aiming to predict our outcome variable '*popularity*'. The underlying idea of tree-based methods is to split the predictor space into some distinct and non-overlapping regions. To do so, we proceed by splitting the sample using a random 50%/50% split. Once we have this partition, the value of popularity can be predicted as the localized average of the observed outcomes in each region.  
+```{r}
+set.seed(1)
+n = dim(Spotify)[1]
+train = sample(1:n, n/2) 
+```
+
+#### 1.3.1. Pruned tree
+The starting values of this algorithm are the sample average and the residual sum of squares. Then, we select one predictor and one threshold to split the predictor space, using the criterion of RSS minimization. The previous step is repeated until a stopping criterion ('mindev=0.001') is defined.
+```{r, results="hide"}
+tree.popularity = tree(popularity ~ ., data = Spotify, 
+                       control = tree.control(n/2, mindev = 0.001), subset = train.index)
+summary(tree.popularity)
+``` 
+Next, we predict the MSE of the unpruned tree on the test set. 
+```{r}
+tree.popularity.pred = predict(tree.popularity, Spotify[-train.index,])
+mse.tree = mean((Spotify$popularity[-train.index]-tree.popularity.pred)^2)
+mse.tree
+```
+The Mean Squared Error for the test set is equal to `r round(mse.tree, 2)`. We can store it to later compare it to the other results. 
+
+The Recursive Binary Splitting can go ahead until each region reaches only one observation but this would cause overfitting problems. At the same time, stopping the procedure too early would prevent us from obtaining the most considerable reduction in the error. Cost Complexity Pruning is beneficial at this point. This approach consists of growing a very large tree and pruning it back to get a subtree.This procedure is equivalent to apply to RR Regularized Criterion a penalty multiplying a measure of flexibility of the model. The flexibility of the model is represented by the number of leaves while the penalty by the component $\alpha$, which modulates the trade-off between complexity and fit to training data. 
+```{r}
+cv.popularity = cv.tree(tree.popularity)
+```
+
+```{r, echo=FALSE}
+plot(cv.popularity$size, cv.popularity$dev, type = 'b')
+```
+Looking at the graph, it is clear that 6 is the optimal number for cross validation, that is, for the identification of the optimal $\alpha$. 
+It is important to recall that for each $\alpha$, there exists a unique subtree. 
+For size equal to 6, deviance stops descreasing. Let us pick this subtree and plot it
+```{r, echo=FALSE}
+prune.popularity = prune.tree(tree.popularity, best = 6)
+plot(prune.popularity)
+text(prune.popularity, pretty = 0)
+```
+Finally, we have a clear plot of the pruned tree. From the bottom to the top, the number of leaves is 6, and we can see that jazz improves a lot in the reduction of the error. 
+
+Let us check whether the subtree works as well as the full tree on the test dataset. To do so, we also compute the MSE on the test set.
+ 
+```{r}
+prune.popularity.pred = predict(prune.popularity, Spotify[-train.index,])
+mse.prune = mean((Spotify$popularity[-train.index]-prune.popularity.pred)^2)
+mse.prune
+```
+In order to check for the fit of the subtree on the test set, we can compute the MSE. The latter is equal to `r round(mse.prune, 2)` . `r round(mse.tree, 2)` was instead computed for the original tree. By computing the square roots for both values, we obtain about 17 and 19, respectively. The pruned tree has improved the prediction ability of popularity.
+
+
+#### 1.3.2. Bagging and Random Forests
+Bootstrap Aggregating aims to reduce the variance of a statistical method by averaging the results of separate sub-trees.The outcome consists in the estimation of a parameter which is typically much less noisy than the estimate provided by a single tree.
+
+One of the advanced methods mentioned so far is the Random Forest approach. The presence of correlation in the bootstrapped samples reflects in a less effective variance reduction. Thus, the underlying idea of Random Forests consists in introducing randomness such that trees become uncorrelated, and the variance reduction can be more effective. Applying this strategy, at each step of the tree building procedure we randomly draw a subset *m* of predictors.
+```{r}
+train.Spotify = Spotify[train.index,]
+test.Spotify = Spotify[-train.index,]
+```
+Let us now fit the Random Forest approach. The default value for _mtry_ in regression is *p*/24.
+```{r}
+rf.Spotify = randomForest(popularity ~ ., 
+                           data = train.Spotify)
+``` 
+```{r, echo=FALSE}
+plot(rf.Spotify$mse, ylab = "OOB mean squared error")
+```
+
+The number of variables that can be randomly selected at each split is a tunning parameter. To evaluate it optimal value, we apply a loop that reports the OOB MSE and the test set MSE for each value of _mtry_.
+```{r, echo=FALSE}
+oob.err = double(24)
+test.err = double(24)
+for (mtry in 1:24) {
+  rf.m = randomForest(popularity ~ .,
+                      data = train.Spotify,
+                      mtry = mtry, ntree = 500)
+  oob.err[mtry] = tail(rf.m$mse,1)
+  pred = predict(rf.m, test.Spotify)
+  test.err[mtry] = mean((pred-test.Spotify$popularity)^2)
+  cat(mtry," ")
+}
+matplot(1:mtry, cbind(test.err, oob.err), pch = 19,
+        col = c("red", "blue"), type = "b", ylab = "Test Error", 
+        main = "Test MSE (red) and OOB (blue)")
+```
+###### Random Forest
+It is unclear which is the optimal value for _mtry_, but probably around 12. Next, we compute the test MSE for this RF specification.
+
+```{r}
+rf.Spotify = randomForest(popularity ~ ., 
+                             data = train.Spotify, 
+                            mtry = 12, ntree = 500)
+rf.pred = predict(rf.Spotify, test.Spotify, type = "response")
+mse.rf = mean((test.Spotify$popularity-rf.pred)^2)
+mse.rf
+```
+We obtain a MSE on the test set of `r round(mse.rf, 2)`.
+
+###### Bagging
+Finally, we compute the MSE for the test set for _metry_ equal to 0 and store it in a vriable to compare later.
+```{r}
+bagg.Spotify = randomForest(popularity ~ ., 
+                             data = train.Spotify, 
+                            mtry = 24, ntree = 500)
+bagg.pred = predict(bagg.Spotify, test.Spotify, type = "response")
+#rmse(test.Spotify$popularity, bagg.pred)
+mse.bagg = mean((test.Spotify$popularity-bagg.pred)^2)
+```
+By comparing the value of the MSE obtained in bagging, which is equal to `r round(mse.bagg, 2)`, we can see that it provides a better performance than unpruned and pruned trees, although interpretability gets worse.
+
+### 1.4. Support Vector Regression
+Support Vector Regression (SVR) works on similar principles as Support Vector Machine (SVM) classification. In particular, it is the adapted form of SVM when the dependent variable is numerical rather than categorical. SVR is a non-parametric technique that allows high flexibility in terms of distribution of underlying variables, relationship between independent and dependent variables and the control on the penalty term.
+
+#### 1.4.1. SVR
+In order to carry out our analysis, the first step is to divide our database in a training and test set by employing the caTools package.
+```{r}
+#Training set and test set
+set.seed(123) 
+split = sample.split(Spotify$popularity, SplitRatio = 0.75) 
+training_set = Spotify[train.index,] 
+test_set = Spotify[-train.index,] 
+```
+First, we have tried to include a support vector predictor with linear Kernel. The funcion tune.svm allows us to analyse different combinations of gamma and cost parameters that reshape the flexibility of the model. We have tunned sequantially in order to reduce the computational power required.
+```{r}
+set.seed(12)
+tuning <- tune.svm(popularity ~ ., data = training_set, kernel='linear', gamma = 10^(-5:-3), cost = 10^(-3:0))
+bestmod = tuning$best.model
+summary(bestmod)
+#Compute MSE on test set for linear kernel
+y_pred_lin = predict(bestmod, newdata = test_set)
+mse.svr.lin = mean((test.Spotify$popularity-y_pred_lin)^2)
+mse.svr.lin
+```
+The setting with gamma=0.0001 and cost=1 seems to be the best for our model. We can now proceed with implementing different types of kernels with the use of the same parameters arising from the tune.svm function. 
+```{r}
+#Radial kernel
+predictor_rd=svm(formula = popularity ~ ., 
+                data = training_set, 
+                type = 'eps-regression', 
+                kernel = 'radial',gamma=0.0001, cost=1)
+#Sigmoid kernel
+predictor_sgm=svm(formula = popularity ~ ., 
+                data = training_set, 
+                type = 'eps-regression', 
+               kernel = 'sigmoid',gamma=0.0001, cost=1)
+#Compute MSE on test set for radial and sigmoid kernel
+y_pred_rd = predict(predictor_rd, newdata = test_set)
+mse.svr.rd = mean((test_set$popularity-y_pred_rd)^2)
+mse.svr.rd
+y_pred_sgm = predict(predictor_sgm, newdata = test_set)
+mse.svr.sgm = mean((test_set$popularity-y_pred_sgm)^2)
+mse.svr.sgm
+```
+We can observe how by incorporating more flexible kernels the MSE on the test set decreases. It would be interesting to try tunning _gamma_ and _cost_ with different kernels. Next, we compare the performance on the test MSE of different models.
+
+### 1.5. Conclusion _popularity_
+```{r, echo=FALSE}
+#We paste together all accuracy and error measures and rename rownames and colnames
+MSE<-rbind(mse.fss, mse.rr, mse.lasso, mse.tree, mse.prune, mse.bagg, mse.rf, mse.svr.lin, mse.svr.rd, mse.svr.sgm)
+mse.table <- data.frame(
+  Model = c("FSS", "Ridge", "LASSO", "Tree", "Pruned tree", "Bagging", "RF", "Lin SVR", "Rad SVR", "Sig SVR"), MSE)
+#Constuct 
+ggplot(data = mse.table, aes(y = MSE, x = Model, fill= MSE))+
+  geom_col()+
+  theme_few()+
+  theme(legend.position = "none")
+```
+In the table above, we can observe the MSE for the different models.When we analyse the comparison among models, we can see that the models that deliver the best predictions for ‘popularity’ are represented by Bagging and Random Forest. FSS, LASSO, RR and the two SVM techniques that employ radial and sigmoid kernel with a parameter of cost=10 give us intermediate results. Finally, the models that perform poorly when compared with the others are the Tree method and the SVM with parameters of gamma=0.0001 and cost=1. Our choice for the first task will thus rest on Bagging and Random Forest.
+
+## 2. Predicting _genre_
+
+In the following lines, we explored the performance of a variety of multi-class ML classification methods in order to predict the genre of a song. This task could become relevant in a number of scenarios, such becoming part of the recommendation algorithm of Spotify in order to show same-genre songs or for internal classification of the new songs that are added to Spotify every day (they sum up to over 1 million per month).
+
+As predicting variables, we included those provided by Spotify regarding audio features, those extracted from the basic sentiment analysis regarding lyrics and popularity.
+
+```{r}
+#Here we perform the train/test split we will use in predicting genre
+#It is a balanced split in the genre variable
+# Training and Test Set 
+set.seed(1011)
+train.label = createDataPartition(spotify_right_lyrics_popularity$genre, 
+                                  p = 2/3, list = FALSE)[,1]
+```
+
+### 2.1. Subset Selection
+
+In this first section, we do Forward Subset Selection and Backward Subset Selection using LDA models. We selected LDA instead of Logistic Regression because the discriminant analysis is more prevalent when there are more than 2 response classes.
+```{r, results='hide', message=F}
+#Prepare variables, test and train
+spotify_data_std <- spotify_right_lyrics_popularity %>%
+  mutate_at(vars(-genre), scale)
+train.spotify_data_std = spotify_data_std[train.label,]
+test.spotify_data_std = spotify_data_std[-train.label,]
+```
+#### 2.1.1. Forward Subset Selection
+```{r, message=F, warning=F}
+# FSS based on classification rate
+forward.lda <- stepclass(train.spotify_data_std, 
+                         grouping =
+                           train.spotify_data_std$genre, 
+                         method = "lda", improvement = 0.005, 
+                         direction ="forward", criterion = "CR",  
+                         fold = 10, output = TRUE)
+formula <- forward.lda[9][[1]]
+
+# Compute best LDA fit according to FSS CR using 10-fold-CV
+lda.forward.bestfit <- lda(formula = formula, 
+                           data = train.spotify_data_std)
+# Predict genre on test set
+lda.forward.pred <- predict(lda.forward.bestfit, 
+                            newdata = test.spotify_data_std)
+# Confussion matrix
+cm.fss <- table(true = test.spotify_data_std$genre, 
+      predict = lda.forward.pred$class)
+```
+```{r, message=F, warning=F, echo=F}
+# Create function to extract performance measures
+cm.performance <- function(true, predicted, metrics=1){
+  classifier_metrics <- ml_test(predicted, true, output.as.table = F)
+  if(metrics==1){
+    #Class specific performance indicators
+    classifier_metrics <- ml_test(predicted, true, output.as.table = T)[, c(1,7,9,18,20)]
+  } else {
+    if(metrics==2){
+      # overall classification accuracy
+      classifier_metrics$accuracy
+    } else {
+      classifier_metrics$error.rate
+    }
+  }
+}
+```
+```{r, message=F, warning=F}
+# Performance of the model
+class.perf.fss <- NULL
+acc.perf.fss <- NULL
+err.perf.fss <- NULL
+(class.perf.fss <- cm.performance(true = test.spotify_data_std$genre,
+               predicted = lda.forward.pred$class))
+(acc.perf.fss <- cm.performance(true = test.spotify_data_std$genre,
+               predicted = lda.forward.pred$class, metrics = 2))
+(err.perf.fss <- cm.performance(true = test.spotify_data_std$genre,
+               predicted = lda.forward.pred$class, metrics = 3))
+```
+We can observe that FSS had an accuracy of `r round(acc.perf.fss, 2)` and and a classification error rate of `r round(err.perf.fss, 2)`.
+
+#### 2.1.2. Backward Subset Selection
+```{r,  message=F, warning=F}
+# BSS based on classification rate
+backward.lda <- stepclass(train.spotify_data_std, 
+                         grouping =
+                           train.spotify_data_std$genre, 
+                         method = "lda", improvement = 0.005, 
+                         direction ="backward", criterion = "CR",  
+                         fold = 10, output = TRUE)
+formula <- backward.lda[9][[1]]
+
+# Compute best LDA fit according to BSS CR using 10-fold-CV
+lda.backward.bestfit <- lda(formula = formula, 
+                           data = train.spotify_data_std)
+# Predict genre on test set
+lda.backward.pred <- predict(lda.backward.bestfit, 
+                            newdata = test.spotify_data_std)
+# Confussion matrix
+cm.bss <- table(true = test.spotify_data_std$genre, 
+      predict = lda.backward.pred$class)
+# Performance of the model
+class.perf.bss <- NULL
+acc.perf.bss <- NULL
+err.perf.bss <- NULL
+(class.perf.bss <- cm.performance(true = test.spotify_data_std$genre,
+               predicted = lda.backward.pred$class))
+(acc.perf.bss <- cm.performance(true = test.spotify_data_std$genre,
+               predicted = lda.backward.pred$class, metrics = 2))
+(err.perf.bss <- cm.performance(true = test.spotify_data_std$genre,
+               predicted = lda.backward.pred$class, metrics = 3))
+```
+We can observe that BSS had an accuracy of `r round(acc.perf.bss, 2)` and and a classification error rate of `r round(err.perf.bss, 2)`. In comparison to FSS, it had slightly better accuracy and lower error, as a tradeoff for including 19 variables instead of 10. Selecting a lower minimum improvement in each iteration would have helped them to achieve beter convergence.
+
+### 2.2 Shrinkahe Methods
+
+Our focus now is to apply the same regularization methods employed on the previous model with **Popularity** as the dependent variable. We have to take into account, however, that in a multiple-output linear model, the least-squares estimates are simply the individual least squares estimates for each of the outputs. Hence, to apply selection and shrinkage methods in the multiple output case, one could apply a univariate technique individually to each outcome or simultaneously to all results. We choose the latter because it would permit all k outputs to be used in estimating the sole regularization parameter $\lambda$.
+
+#### 2.2.1. Ridge Regression
+
+The (log)$\lambda$ associated to the lowest value of the MSE has a value far from zero, corresponding to the unconstrained model, therefore shrinking the estimated coefficients is not effective in reducing the variance, making the Ridge Regression a poor alternative to the Least Squares. The balanced accuracy gives however reliable results for the predictive ability of the model.  
+
+```{r, results='hide'}
+# Ridge Regression
+x = model.matrix(genre ~ . -1, data = spotify_right_lyrics_popularity) 
+y = spotify_right_lyrics_popularity$genre
+```
+
+```{r, results='hide'}
+# Training and Test Set 
+x.train = x[train.label, ]
+y.train = y[train.label]
+x.test = x[-train.label, ]
+y.test = y[-train.label]
+spotify_right_lyrics_popularity.train = spotify_right_lyrics_popularity[train.label, ]
+spotify_right_lyrics_popularity.test = spotify_right_lyrics_popularity[-train.label, ]
+```
+
+```{r,results='hide'}
+# Ridge Regression Model
+fit.ridge = glmnet(x.train, y.train, family = "multinomial", alpha = 0)
+#plot(fit.ridge, xvar = "lambda", label = TRUE)
+```
+
+```{r, results='hide'}
+# 10-fold CV on Lambda
+cv.ridge = cv.glmnet(x.train, y.train, family = "multinomial", alpha = 0)
+#plot(cv.ridge)
+#coef(cv.ridge)
+```
+
+```{r}
+# Prediction
+pred.ridge = predict(cv.ridge, x.test, type ="class", s = cv.ridge$lambda.1se)
+table(true = y.test, prediction = pred.ridge)
+```
+
+```{r}
+# class labels predicted by the classifier model
+predicted_labels <- pred.ridge
+
+# true labels (test set)
+true_labels <- y.test
+
+classifier_metrics <- ml_test(predicted_labels, true_labels, output.as.table = FALSE)
+
+# overall classification accuracy
+(acc.rr <- classifier_metrics$accuracy)
+
+# F1-measures for classes "cat", "dog" and "rat"
+(err.rr <- classifier_metrics$error.rate)
+
+# tabular view of the metrics (except for 'accuracy' and 'error.rate')
+classifier_metrics <- ml_test(predicted_labels, true_labels, output.as.table = T)[,c(1,7,9,18,20)]
+classifier_metrics
+```
+
+#### 2.2.2. LASSO
+
+```{r, results='hide'}
+#LASSO 
+fit.lasso = glmnet(x.train, y.train, family = "multinomial")
+#plot(fit.lasso, xvar = "lambda", label = TRUE)
+```
+
+```{r, results='hide'}
+#Cross-Validation
+set.seed(1)
+cv.lasso = cv.glmnet(x.train, y.train, family = "multinomial")
+#coef(cv.lasso)
+```
+
+```{r, echo=F}
+plot(cv.lasso)
+```
+
+```{r}
+# Choice of the best model
+i.best = which(fit.lasso$lambda == cv.lasso$lambda.1se)
+i.best
+```
+
+```{r}
+# Nonzero parameters
+fit.lasso$df[i.best]
+```
+
+The inefficiency of the Shrinkage Methods is once again shown for the best model that shows no variable selection given that the nonzero parameters remain the same of the original model. Nevertheless the predictability of the method is still relevant given its well-behaved levels of accuracy and error rate, as shown below.
+
+```{r}
+#Prediction (test MSE)
+pred.lasso = predict(fit.lasso, x.test, type ="class", s = cv.lasso$lambda.1se)
+table(true = y.test, prediction = pred.ridge)
+```
+
+```{r}
+# class labels predicted by the classifier model
+predicted_labels <- pred.ridge
+
+# true labels (test set)
+true_labels <- y.test
+
+classifier_metrics <- ml_test(predicted_labels, true_labels, output.as.table = FALSE)
+
+# overall classification accuracy
+acc.lasso <- classifier_metrics$accuracy
+acc.lasso
+
+# F1-measures for classes "cat", "dog" and "rat"
+err.lasso <- classifier_metrics$error.rate
+err.lasso
+
+# tabular view of the metrics (except for 'accuracy' and 'error.rate')
+classifier_metrics <- ml_test(predicted_labels, true_labels, output.as.table = T)[,c(1,7,9,18,20)]
+classifier_metrics
+
+```
+
+### 2.3. Tree-based methods
+
+In this section, we explored the predicting ability of tree based methods. To be precise, we compared a single pruned tree, bagging, random forest and boosting.
+```{r, results='hide', message=F}
+#Prepare train and test set
+train.spotify_right_lyrics_popularity = spotify_right_lyrics_popularity[train.label,]
+test.spotify_right_lyrics_popularity = spotify_right_lyrics_popularity[-train.label,]
+```
+
+#### 2.3.1. Pruned tree
+```{r, message = F}
+# Grow tree
+tree.genre <- tree(genre ~ ., data = train.spotify_right_lyrics_popularity, 
+                  control = tree.control(nobs = nrow(spotify_right_lyrics_popularity), mindev = 0.001), 
+                  subset = train.label)
+
+# Compute predictions on test set of unpruned tree
+tree.genre.pred <- predict(tree.genre, test.spotify_right_lyrics_popularity, type = "class")
+with(test.spotify_right_lyrics_popularity, table(true = genre, predict = tree.genre.pred))
+err.perf.tree <- NULL
+acc.perf.tree <- NULL
+(err.perf.tree <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+               predicted = tree.genre.pred, metrics = 3))
+(acc.perf.tree <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+               predicted = tree.genre.pred, metrics = 2))
+# Prune tree
+cv.genre_class = cv.tree(tree.genre, FUN = prune.misclass)
+prune.genre_class = prune.misclass(tree.genre, best = 11)
+```
+```{r, echo=FALSE}
+plot(prune.genre_class)
+text(prune.genre_class, pretty = 0)
+```
+```{r, message=F, warning=F}
+# Evaluate pruned tree on test data
+tree.pruned.genre.pred = predict(prune.genre_class, test.spotify_right_lyrics_popularity, type = "class")
+with(test.spotify_right_lyrics_popularity, table(true = genre, predict = tree.pruned.genre.pred))
+class.perf.pruned.tree <- NULL
+acc.perf.pruned.tree <- NULL
+err.perf.pruned.tree <- NULL
+(class.perf.pruned.tree <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+               predicted = tree.pruned.genre.pred))
+(acc.perf.pruned.tree <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+               predicted = tree.pruned.genre.pred, metrics = 2))
+(err.perf.pruned.tree <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+               predicted = tree.pruned.genre.pred, metrics = 3))
+```
+The pruned tree had a classification error on the test set of `r round(err.perf.pruned.tree, 2)`, which is slightly higher than the full grown tree. In addition, no observations predicted EDM. We expect the result to improve in the following methods due to the reduction in variance.
+
+#### 2.3.2. Bagging and Random Forest
+```{r, results='hide', message=F}
+#Grow RF
+rf.genre <- randomForest(genre ~ ., 
+                        data = train.spotify_right_lyrics_popularity,
+                        ntree = 1000,
+                        mtry = 4) #common choice is floor(sqrt(24))
+rf.genre
+```
+```{r, echo=FALSE}
+plot(rf.genre$err.rate[,1], ylab = "OOB error rate", main = "Untuned random forest error rate")
+```
+Given that _mtry_ is a tuning parameter, we loop over the possible different values to see its performance. In addition, we compare the OOB error to the test set error.
+```{r, results='hide'}
+#Estimate OOB error for every possible combination of mtry 
+oob.err = double(24)
+test.err = double(24)
+for (mtry in 1:24) {
+  rf.m = randomForest(genre ~ ., 
+                      data = train.spotify_right_lyrics_popularity, 
+                      mtry = mtry, ntree = 1000)
+  oob.err[mtry] = rf.m$err.rate[1000,1]
+  pred = predict(rf.m, test.spotify_right_lyrics_popularity)
+  test.err[mtry] = with(test.spotify_right_lyrics_popularity, mean(genre != pred))
+  cat(mtry," ")
+}
+```
+```{r, echo=FALSE}
+matplot(1:mtry, cbind(test.err, oob.err), pch = 19, 
+        col = c("red", "blue"), type = "b", ylab = "Test Error", 
+        main = "Test MSE (red) and OOB (blue)")
+```
+It appears like 4 was not the correct choice for _mtry_. Next, the evaluate the predicting ability of bagging and random forest with _mtry_=8.
+```{r, message=F, warning=F}
+# Bagging prediction
+bagging.genre <- randomForest(genre ~ ., 
+                        data = train.spotify_right_lyrics_popularity,
+                        ntree = 1000,
+                        mtry = 24) #the common choice for classification is floor(sqrt(24))
+bagging.genre
+bagging.pred <- predict(bagging.genre, test.spotify_right_lyrics_popularity, type = "class")
+class.perf.bagging <- NULL
+acc.perf.bagging <- NULL
+err.perf.bagging <- NULL
+(class.perf.bagging <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+               predicted = bagging.pred))
+(acc.perf.bagging <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+               predicted = bagging.pred, metrics = 2))
+(err.perf.bagging <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+               predicted = bagging.pred, metrics = 3))
+```
+We note that error rate (`r round(err.perf.bagging, 2)`) and accuracy (`r round(acc.perf.bagging, 2)`) have improved very much with respect to single trees.
+```{r, echo=F}
+varImpPlot(bagging.genre)
+```
+We observe how the variables that contribute the most for the separation of classes are mainly those associated to audio features.
+```{r, message=F, warning=F}
+# RF prediction
+rf.genre.8 <- randomForest(genre ~ ., 
+                        data = train.spotify_right_lyrics_popularity,
+                        ntree = 1000,
+                        mtry = 8) #the common choice for classification is floor(sqrt(24))
+rf.genre.8
+random.forest.pred <- predict(rf.genre.8, test.spotify_right_lyrics_popularity, type = "class")
+class.perf.random.forest <- NULL
+acc.perf.random.forest <- NULL
+err.perf.random.forest <- NULL
+(class.perf.random.forest <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+               predicted = random.forest.pred))
+(acc.perf.random.forest <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+               predicted = random.forest.pred, metrics = 2))
+(err.perf.random.forest <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+               predicted = random.forest.pred, metrics = 3))
+```
+We note that error rate (`r round(err.perf.random.forest, 2)`) and accuracy (`r round(acc.perf.random.forest, 2)`) have also improved very much with respect to single trees and they are slighlty better than bagging.
+
+```{r, echo=F}
+varImpPlot(rf.genre.8)
+```
+We observe how the variables that contribute the most for the separation of classes are mainly those associated to audio features.
+
+#### 2.3.3. Boosting
+
+In boosting, three main parameters need to be tuned: tree depth, learning rate and the number of ensemble trees. Unfortunately, it is not possible to find the optimal values sequentially. For this reason, we create a grid of possible values for each method, and one model is computed for each unique combination. Later, we can select those parameters with the highest accuracy to make the predictions and calculate the error rate.
+```{r, message=F, warning=F}
+#Select possible parameters
+tune_grid <- expand.grid(nrounds=c(100,200,300,400,600), #number of trees
+                         max_depth = c(2:7), #depth of each tree
+                         eta = c(0.005,0.01,0.05, 1), #learning rate
+                         gamma = c(0.01),
+                         colsample_bytree = c(0.75),
+                         subsample = c(0.50),
+                         min_child_weight = c(0))
+#10-fold CV to compute accuracy
+trctrl <- trainControl(method = "cv", number = 10)
+```
+
+```{r, echo=F, eval=F}
+#Run the models. It takes more than 2 hours. Uncomment if you wish to retrain it.
+#boost.models <- train(genre ~., data = train.spotify_right_lyrics_popularity, method = #"xgbTree",
+#                trControl=trctrl,
+#                tuneGrid = tune_grid,
+#                tuneLength = 10)
+```
+We can observe what is the best model.
+```{r, echo=F}
+#We load the object to avoid two hours of computation
+a <- readRDS(url("https://github.com/rubenmartinez9/Spotify-ML-project/raw/main/boost.models.RDS"))
+
+plot(a)
+```
+Fit the best boosting model according to the best parameter specification.
+```{r, message=F, warning=F}
+#Choose parameters
+tune_grid <- expand.grid(nrounds=c(200), 
+                         max_depth = 6,
+                         eta = c(0.05),
+                         gamma = c(0.01),
+                         colsample_bytree = c(0.75),
+                         subsample = c(0.50),
+                         min_child_weight = c(0))
+#Fit best model
+boost.best.fit <- train(genre ~., data = train.spotify_right_lyrics_popularity, 
+                        method = "xgbTree",
+                        trControl=trctrl,
+                        tuneGrid = tune_grid,
+                        tuneLength = 10)
+#Make predictions based on test set
+boost.pred <- predict(boost.best.fit, 
+                      test.spotify_right_lyrics_popularity %>% select(-genre))
+#Compute performance measures of the model
+table(true=test.spotify_right_lyrics_popularity$genre, pred=boost.pred)
+class.perf.boost <- NULL
+acc.perf.boost <- NULL
+err.perf.boost <- NULL
+(class.perf.boost <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+                                  predicted = boost.pred))
+(acc.perf.boost <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+                                predicted = boost.pred, metrics = 2))
+(err.perf.boost <- cm.performance(true = test.spotify_right_lyrics_popularity$genre,
+                                predicted = boost.pred, metrics = 3))
+```
+We can observe that the classification error and accuracy have improved over random forest and bagging, with `r round(err.perf.boost, 2)` and `r round(acc.perf.boost, 2)` respectively.
+```{r, echo=F}
+varImp(boost.best.fit) %>% plot()
+```
+To understand what is going on inside the boosting model, we can plot their relative importance. We see how the variables that contribute the most for the separation of classes are mainly those associated to audio features and popularity. The variables associated with the sentiment of the lyrics play a very secondary role.
+
+### 2.4 Multiclass SVM
+As last exercise we have used Support Vector Machine techniques to predict the musical genre of a song. First of all we would need to download the package e071 and to specify our main variable (genre) as a factor variable.
+```{r, echo=F}
+spotify_numeric <-spotify_right_lyrics_popularity %>% mutate( 
+  genre=genre %>% as.factor())
+```
+The first step is to divide our database in a training and test set by employing the caTools package
+```{r}
+#Training set and test set
+training_set = spotify_numeric[train.label,] 
+test_set = spotify_numeric[-train.label,]
+```
+#### 2.4.1. Linear Kernel, optimal parameters
+As a first analysis, we have tried to include a support vector classifier with a linear Kernel. We have used the function tune.svm provided by e1071 to analyse a different combination of the gamma and the cost parameters that modify the flexibility of the model. After having explored all the combinations, we have retrieved the best model, and we have employed it to make some predictions on the test set.
+```{r, results='hide', message=F}
+set.seed(12)
+tuning <- tune.svm(genre~., data = training_set, kernel='linear', gamma = 10^(-5:-3), cost = 10^(-3:0))
+#summary(tuning)
+bestmod = tuning$best.model
+summary(bestmod)
+y_predlin = predict(bestmod, newdata = test_set)
+cmlin=table(y_predlin,test_set[,"genre"])
+cmlin
+# class labels predicted by the classifier model
+predicted_labels <- y_predlin
+
+# true labels (test set)
+true_labels <- test_set$genre
+
+classifier_metrics <- ml_test(predicted_labels, true_labels, output.as.table = FALSE)
+
+# overall classification accuracy
+acc.svm.lin <- classifier_metrics$accuracy
+acc.svm.lin
+# F1-measures for classes
+err.svm.lin <- classifier_metrics$error.rate
+err.svm.lin
+```
+Our model seems to work better in a setting with gamma=0.0001 and cost=1. In this case the accuracy rate is equal to  `r round(acc.svm.lin, 2)` and the error classification rate is equal to `r round(err.svm.lin, 2)`.
+
+#### 2.4.2 Non-Linear Kernels, optimal parameters
+We will now try to use the same parameters that we have found by exploiting the tune.svm function but using different types of kernels. 
+```{r, results='hide', message=F}
+set.seed(12)
+classifier_rd=svm(formula = genre ~ ., 
+                data = training_set, 
+                type = 'C-classification', 
+                kernel = 'radial',gamma=0.0001, cost=1)
+
+set.seed(12)
+classifier_sgm=svm(formula = genre ~ ., 
+                data = training_set, 
+                type = 'C-classification', 
+               kernel = 'sigmoid',gamma=0.0001, cost=1)
+
+
+y_pred_rd = predict(classifier_rd, newdata = test_set)
+cm_rd=table(y_pred_rd,test_set[,"genre"])
+cm_rd #confusion table with radial kernel
+
+
+y_pred_sgm = predict(classifier_sgm, newdata = test_set)
+cm_sgm=table(y_pred_sgm,test_set[,"genre"])
+cm_sgm #confusion table with sigmoid kernel
+
+# class labels predicted by the classifier model
+predicted_labels2 <- y_pred_rd
+predicted_labels3 <-y_pred_sgm
+
+
+# true labels (test set)
+true_labels2 <- test_set$genre
+true_labels3 <-test_set$genre
+
+classifier_metrics2 <- ml_test(predicted_labels2, true_labels2, output.as.table = FALSE)
+classifier_metrics3 <- ml_test(predicted_labels3, true_labels3, output.as.table = FALSE)
+# overall classification accuracy
+acc.svm.rad <- classifier_metrics2$accuracy
+acc.svm.sig <-classifier_metrics3$accuracy
+
+# F1-measures for classes
+err.svm.rad <- classifier_metrics2$error.rate
+err.svm.sig <-classifier_metrics3$error.rate
+
+acc.svm.rad #accuracy radial kernel
+acc.svm.sig #accuracy sigmoid
+
+err.svm.rad #error.rate radial kernel
+err.svm.sig #error.rate sigmoid
+```
+What we can notice is that the more we add flexibility to our model, the more the predictions tend to converge toward the category "Songwriter" that as we have seen in our best subset selection analysis has a strong predictive power over the genre. One possible reason for this pattern is that our model with Linear Kernel and the best parameters capture a good equilibrium between bias and variance that is broken by the use of a more flexible Kernel. 
+#### 2.4.3 Non-linear Kernels, standard parameters
+Finally, we have tried to analyse the performance of non-linear kernel(radial and sigmoid) by coming back to the standard parameter of cost=10. We have tried to reproduce the results obtained for tune.svm for a radial and a sigmoid kernel but the code took too much time and did not seem to work correctly.
+```{r, results='hide', message=F}
+#RADIAL Kernel
+set.seed(12)
+classifier_rd_std = svm(formula = genre ~ ., 
+                 data = training_set, 
+                 type = 'C-classification', 
+                 kernel = 'radial', cost=10) 
+
+y_rd_std = predict(classifier_rd_std, newdata = test_set)
+
+
+# class labels predicted by the classifier model
+predicted_labels_std <-y_rd_std
+
+# true labels (test set)
+true_labels_std <- test_set$genre
+
+classifier_metrics_std <- ml_test(predicted_labels_std, true_labels_std, output.as.table = FALSE)
+
+# overall classification accuracy
+accuracy_std <- classifier_metrics_std$accuracy
+
+# F1-measures for classes
+error.rate_std <- classifier_metrics_std$error.rate
+accuracy_std
+error.rate_std
+
+#SIGMOID Kernel
+set.seed(12)
+classifier_sgm_std = svm(formula = genre ~ ., 
+                 data = training_set, 
+                 type = 'C-classification', 
+                 kernel = 'sigmoid', cost=10) 
+
+y_sgm_std = predict(classifier_sgm_std, newdata = test_set)
+
+# class labels predicted by the classifier model
+predicted_labels_sgmsd <-y_sgm_std
+# true labels (test set)
+true_labels_sgmsd <- test_set$genre
+
+classifier_metrics_sgmsd <- ml_test(predicted_labels_sgmsd, true_labels_sgmsd, output.as.table = FALSE)
+
+# overall classification accuracy
+accuracy_sgmsd <- classifier_metrics_sgmsd$accuracy
+
+# F1-measures for classes
+error.rate_sgmsd <- classifier_metrics_sgmsd$error.rate
+accuracy_sgmsd
+error.rate_sgmsd
+```
+When we change the parameters, we can notice that both the Radial and Sigmoid Kernel perform better than in the previous case. In particular, the model with the Radial Kernel gives us the best result in terms of accuracy with a measure that reaches 'r round(accuracy_std, 2)'. Also, the sigmoid seems to perform better results than for the linear kernel with the best parameters. The first one, indeed, delivers an accuracy equal to 'r round(accuracy_sgmsd, 2)' versus the linear kernel that gives us an accuracy of 'r round (accuracy, 2)'. 
+
+
+### 2.5. Conclusion _genre_
+We observed how the predicting ability of the models range from about 50% error rate to less than 35%. This is a very significant improvement! Down below we can observe the table summarizing all the results.
+```{r, echo=F}
+#We paste together all accuracy and error measures and rename rownames and colnames
+fss <- cbind(acc.perf.fss, err.perf.fss)
+bss <- cbind(acc.perf.bss, err.perf.bss)
+rr <- cbind(acc.rr, err.rr)
+lasso <- cbind(acc.lasso, err.lasso)
+tree <- cbind(acc.perf.tree, err.perf.tree)
+pruned <- cbind(acc.perf.pruned.tree, err.perf.pruned.tree)
+bagging <- cbind(acc.perf.bagging, err.perf.bagging)
+rf <- cbind(acc.perf.random.forest, err.perf.random.forest)
+boost <- cbind(acc.perf.boost, err.perf.boost)
+svm.lin <- cbind(acc.svm.lin, err.svm.lin)
+svm.rad.t2 <- cbind(acc.svm.rad, err.svm.rad)
+svm.sig.t2 <- cbind(acc.svm.sig, err.svm.sig)
+svm.rad <- cbind(accuracy_std, error.rate_std)
+svm.sig <- cbind(accuracy_sgmsd, error.rate_sgmsd)
+
+comp.table<-rbind(fss, bss, rr, lasso, tree, pruned, bagging, rf, boost,
+                  svm.lin, svm.rad, svm.sig, svm.rad.t2, svm.sig.t2)%>%as.data.frame()
+colnames(comp.table) <- "Accuracy"
+comp.table$Model <- c("FSS", "BSS", "RR", "LASSO", "Tree", "Pruned tree", "Bagging", "Random Forest", "Boosting", "Lin SVM", "Rad SVM", "Sig SVM", 
+                          "Tune2 Rad SVM", "Tune2 Sig SVM")
+comp.table                
+```
+
+```{r, echo=F}
+#Construct 
+ggplot(data = comp.table, mapping = aes(x = reorder(Model, Accuracy), y=Accuracy,
+                                                      fill = -Accuracy))+
+  geom_bar(stat='identity')+
+  theme_few()+
+  theme(legend.position = "none")+coord_flip()+xlab("Model")
+
+```
+When we analyse the performance of the classification task for the different models again, we can notice that Boosting, Random Forest and Bagging seem to outperform the other models. SVM with Linear and Radial (cost=10) kernels give us satisfying results differently from the SVM with a sigmoid kernel that seems to lag behind. In the middle, we find Pruned Tree, FSS, RR, and LASSO. The worst performances are registered for the SVM models with parameters of gamma=0.0001 and the cost=1.
